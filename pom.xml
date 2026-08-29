@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ive-data-protection — la librería de protección de datos.
+
+  QUE HACE: dado un valor, qué es ese dato y quién lo va a recibir,
+  devuelve el valor en la forma que corresponde. La decisión sale de una
+  TABLA que es propia de cada organización; esta librería la evalúa.
+
+  POR QUE ES UNA LIBRERIA Y NO CODIGO GENERADO: la técnica puede depender
+  de quién invoca, y eso se resuelve en cada llamada. Generar la decisión
+  la fijaría al momento de generar, que es justamente cuando no se sabe.
+
+  POR LENGUAJE, NO POR FRAMEWORK. Acá no hay Spring, ni Jackson, ni nada
+  que ate a un framework: lo que varía por framework es cómo se engancha,
+  y eso va en otro artefacto. Este no declara ninguna dependencia de
+  runtime a propósito.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- Las mismas coordenadas que ya usa `ive-flow-runtime` en los pom
+       generados: es la otra librería de runtime de este ecosistema. -->
+  <groupId>ar.ive.spec</groupId>
+  <artifactId>ive-data-protection</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <name>IVE Data Protection</name>
+  <description>
+    Resuelve y aplica la técnica de protección que corresponde a un dato,
+    a partir de su clasificación, su sensibilidad y el nivel de confianza
+    de quien lo recibe.
+  </description>
+
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.10.2</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.2.5</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>

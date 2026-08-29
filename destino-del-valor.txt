@@ -1,0 +1,111 @@
+COMO DICE EL CODIGO GENERADO A DONDE VA EL VALOR
+========================================================================
+(mirado contra el backend que hoy se genera: ive-templates/
+ive-templates-java-springboot -- service-class-base, api-controller,
+entity-base, view, record)
+
+RESPUESTA CORTA
+------------------------------------------------------------------------
+NO LO DICE: LO DICE EL SITIO. El destino no es un dato que alguien
+declare ni que la plantilla tenga que adivinar por valor -- queda
+determinado por CUAL DE LOS DOS SITIOS DEL BACKEND emite la llamada.
+El backend generado tiene exactamente dos bordes, y hoy solo uno de los
+dos existe como sitio de codigo.
+
+1. HACIA EL ALMACENAMIENTO -- SITIO: `mapInputToEntity`
+------------------------------------------------------------------------
+En `{Grupo}ServiceBase.java` (siempre regenerado):
+
+    Pet entity = mapInputToEntity(input);
+    Pet saved  = repository.save(entity);
+
+Es el unico punto por donde un valor que llega cruza de la View de
+entrada a la Entity, y de ahi a la base. Todo lo que pase por ahi va al
+ALMACENAMIENTO. No hay trustLevel: no hay destinatario. La forma se
+resuelve como ya estaba previsto -- la salida MAS EXIGENTE de todas las
+que usan el dato, recorriendo `DecisionTable.trustLevels()`.
+
+OJO, y no es menor: hoy ese metodo es una copia en bloque
+
+    BeanUtils.copyProperties(input, entity);
+
+No hay campo por campo. Emitir "una llamada por cada valor sensible"
+ahi adentro no es agregar lineas alrededor: es que la plantilla
+descienda el grafo y REEMPLACE o COMPLEMENTE esa copia. Es el punto 4
+del estado y es un cambio real a ese metodo.
+
+2. HACIA UN DESTINATARIO -- NO HAY SITIO
+------------------------------------------------------------------------
+Este es el hallazgo. El Service devuelve la Entity tal cual:
+
+    return saved;   /   return found;
+
+y el Controller la devuelve anotada:
+
+    @JsonView(Pet.OutputView.class)
+    public Pet getPet(...) { return petService.getPet(...); }
+
+NO EXISTE NINGUN `mapEntityToOutput`. Para la salida no se genera
+ninguna clase y no hay ningun mapeo -- lo dice escrito `view/main.hbs`:
+"Jackson arma el JSON filtrado directo desde la propia Entity".
+
+Consecuencias, las tres:
+
+  · El destino "destinatario" NO TIENE donde alojar una llamada por
+    valor en el codigo que hoy se genera. El unico lugar posible es el
+    SERIALIZADOR. Por eso el punto 3 del estado (el enganche Jackson/
+    Spring, en otro artefacto) no es un paso posterior ni opcional: es
+    el unico sitio donde ese destino puede vivir.
+  · Por eso tambien `OMITTED` solo se resuelve ahi, y esta bien que
+    asi sea: que el campo NO APAREZCA no es un valor que una funcion
+    pueda devolver, es una decision del serializador.
+  · Y por eso el `trustLevel` llega naturalmente por ahi: el
+    serializador corre dentro de la llamada, que es lo unico que
+    conoce a quien le esta contestando. `TrustResolver<C>` con su
+    parametro de invocacion encaja exacto: C es el contexto de la
+    peticion.
+
+3. EL TERCER BORDE QUE NO ESTABA ANOTADO: LA VUELTA DE LA BASE
+------------------------------------------------------------------------
+Si el dato se guarda cifrado, DESHACERLO PASA AL LEER, no al escribir.
+Ese borde tampoco tiene sitio generado: le corresponde un
+`AttributeConverter` de JPA (`@Convert` en la propiedad de
+`{Entity}Base`), que hoy ninguna plantilla emite. Es el simetrico de
+Jackson y cae en el mismo "otro artefacto" de enganche por framework.
+Sin el, `toRecipient` recibiria un valor cifrado y tendria que
+descifrarlo por su cuenta -- se puede, pero entonces el
+`AttributeConverter` no debe existir, porque si no se descifra dos
+veces. HAY QUE ELEGIR UNA DE LAS DOS, Y ESCRIBIRLO.
+
+QUE SE SIGUE PARA LA API DE LA LIBRERIA
+------------------------------------------------------------------------
+No hace falta un `enum Destino` que el que llama pase a mano y pueda
+equivocar. Dos puntos de entrada, cada uno honesto sobre lo que sabe:
+
+    Object toStorage(Object value, Class<?> from, Class<?> to,
+                     Classification c);
+        -- SIN trustLevel. La libreria recorre `trustLevels()`, pide la
+           tecnica de cada uno y se queda con la forma de guardado que
+           todavia permite llegar a la mas exigente. Es donde vive el
+           punto 2 del estado.
+
+    Object toRecipient(Object value, Class<?> from, Class<?> to,
+                       Classification c, String trustLevel);
+        -- CON trustLevel. Una sola consulta a la tabla.
+
+Las dos comparten el nucleo: deshacer lo que tenga puesto -> valor real
+-> hacer lo que haga falta. La FORMA GUARDADA es el estado de entrada
+de `toRecipient`, y es exactamente lo que
+`IrreversibleTechniqueException` ya sabe contar.
+
+Falta un dato que ninguna de las dos firmas tiene y que `toRecipient`
+necesita: EN QUE FORMA ESTA EL VALOR QUE LLEGA. O lo pasa el que llama
+(la plantilla lo sabe: es lo que decidio `toStorage`), o la libreria lo
+vuelve a derivar de `trustLevels()`. Lo segundo es una sola fuente de
+verdad y no puede desincronizarse; lo primero es mas barato. Esta sin
+decidir.
+
+LO QUE NO MIRE
+------------------------------------------------------------------------
+El lado SDK (`record/main.hbs`): es un cliente, consume lo que ya salio
+filtrado. No es un borde de proteccion del backend.
