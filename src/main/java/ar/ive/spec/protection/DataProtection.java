@@ -159,6 +159,39 @@ public final class DataProtection {
     }
 
     // ------------------------------------------------------------------
+    // LO QUE ESTE EVALUADOR TIENE, para quien lo verifica
+    //
+    // De paquete y no publico: lo unico que necesita mirar adentro es
+    // `TableVerification`, que vive aca al lado. Abrirlo del todo dejaria
+    // que cualquiera pregunte por la tabla y decida por su cuenta, que es
+    // exactamente lo que esta clase existe para centralizar.
+    // ------------------------------------------------------------------
+
+    DecisionTable table() {
+        return table;
+    }
+
+    TokenService tokens() {
+        return tokens;
+    }
+
+    Generalizer generalizer() {
+        return generalizer;
+    }
+
+    KeyProvider keys() {
+        return keys;
+    }
+
+    Sensitivity encryptFrom() {
+        return encryptFrom;
+    }
+
+    boolean withoutEncryptionAtRest() {
+        return sinCifradoEnReposo;
+    }
+
+    // ------------------------------------------------------------------
     // La forma de guardado
     // ------------------------------------------------------------------
 

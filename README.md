@@ -161,6 +161,44 @@ Se comprueba en **toda** consulta a la tabla, no solo en la salida: si no, una
 forma de guardado podría quedar fijada por una regla que el techo no admite, y
 eso se descubriría con el dato ya escrito.
 
+## Verificar la tabla antes de usarla
+
+Casi todo lo que esta librería puede negar **no es un error de ejecución**:
+es una propiedad de la tabla. `techniqueFor` y `ceilingFor` dependen sólo
+de la clasificación y del nivel —ninguna mira el dato— así que los
+agujeros se pueden **recorrer**:
+
+```java
+for (Finding hallazgo : TableVerification.verify(protection, DataClassifications.ALL, TIPOS, Set.of())) {
+    System.out.println(hallazgo);
+}
+```
+
+Recorre **clasificaciones × niveles, incluido el invocador desconocido**, y
+encuentra: pares sin respuesta, reglas que pasan el techo de la propia
+tabla, parámetros mal escritos, lo que falta cablear, y lo que la técnica
+produce cuando no entra en el tipo del campo.
+
+Lo que **no** se puede verificar así, y por eso queda para ejecución: que
+el dato que llega **de otro sistema** alcance para lo que hay que dar
+(`IrreversibleTechniqueException`, `UnknownFormException`). Sobre la base
+propia no puede pasar: la forma de guardado siempre puede llegar a la
+salida más exigente, y eso es lo que compra esa regla.
+
+**El invocador desconocido se recorre siempre**, y es el caso más fácil de
+olvidar: la regla para `ANY_LEVEL` no lo cubre —esa red sólo se tira
+cuando hay un nivel—. Que se le niegue el dato puede ser exactamente lo
+que la organización quiso; lo que no puede ser es que nadie lo haya
+decidido. Por eso se exige una fila **explícita**.
+
+Es **el mismo verificador que el de Python**, hallazgo por hallazgo y con
+las mismas claves. La tabla de una organización es una sola aunque haya
+dos backends leyéndola.
+
+El backend generado lo llama en un `@PostConstruct` y **no levanta si hay
+hallazgos**: la alternativa es fallar en la petición de alguien, meses
+después.
+
 ## Cuando el otro lado no usa IVE
 
 No hay tabla compartida, así que **la forma en que llegó el valor no se puede
