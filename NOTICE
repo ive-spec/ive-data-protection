@@ -1,0 +1,14 @@
+IVE -- biblioteca de ejecucion / runtime library
+
+ES: Biblioteca de la que depende el codigo que genera IVE, bajo la
+licencia MIT (ver LICENSE). Se entrega TAL CUAL, sin garantias de ningun
+tipo. Quien la incluya en un sistema es responsable de verificar que ese
+sistema cumpla sus propios requisitos de seguridad, legales y de negocio.
+
+EN: A library the code IVE generates depends on, under the MIT license
+(see LICENSE). It is provided AS IS, without warranty of any kind.
+Whoever includes it in a system is responsible for checking that the
+system meets its own security, legal and business requirements.
+
+The generator (ive-tools) and the library that reads the IVE language
+(ive-language) are NOT under this license.

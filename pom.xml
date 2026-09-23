@@ -33,6 +33,12 @@
     a partir de su clasificación, su sensibilidad y el nivel de confianza
     de quien lo recibe.
   </description>
+  <licenses>
+    <license>
+      <name>MIT</name>
+      <url>https://opensource.org/licenses/MIT</url>
+    </license>
+  </licenses>
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
