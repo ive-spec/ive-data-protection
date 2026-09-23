@@ -1,0 +1,6 @@
+target/
+
+# Del IDE de cada uno (Eclipse los regenera).
+.settings/
+.project
+.classpath

@@ -164,6 +164,85 @@ class NucleoTest {
         assertTrue(e.getMessage().contains("indeterminado"));
     }
 
+    // --- El clearance y la matriz por omision ---
+    //
+    // LO QUE ESTOS CASOS CUIDAN son las DOS propiedades que hacen
+    // aceptable que la libreria traiga una omision, que es justo lo que
+    // evita en todo lo demas. Si una de las dos se rompe, la omision deja
+    // de ser un piso y pasa a ser un veredicto.
+
+    @Test
+    void la_matriz_nunca_entrega_entero_un_dato_restringido() {
+        // NI EL CLEARANCE MAS ALTO. Para entregarlo entero hay que
+        // ESCRIBIR LA FILA: asi la omision no regala nunca lo mas caro.
+        for (int clearance = 0; clearance <= 99; clearance++) {
+            var forma = Baseline.CONSERVATIVE.forPair(Sensitivity.RESTRICTED, clearance);
+            assertNotEquals(Technique.FULL, forma.technique(),
+                    "clearance " + clearance + " recibio el dato restringido entero");
+        }
+    }
+
+    @Test
+    void la_matriz_revela_menos_cuanto_menos_se_confia() {
+        // Falla cerrado, y en los cuatro niveles de sensibilidad.
+        for (Sensitivity sensibilidad : Sensitivity.values()) {
+            Technique anterior = null;
+            for (int clearance = 1; clearance <= 5; clearance++) {
+                Technique ahora = Baseline.CONSERVATIVE.forPair(sensibilidad, clearance).technique();
+                if (anterior != null) {
+                    assertFalse(anterior.revealsMoreThan(ahora),
+                            sensibilidad + ": bajar el clearance no puede mostrar MAS");
+                }
+                anterior = ahora;
+            }
+        }
+    }
+
+    @Test
+    void al_desconocido_la_matriz_no_le_muestra_nada() {
+        // Y el declarado SIN clearance entra por la misma puerta: no hay
+        // cantidad con la cual ubicarlo, y suponerle una seria inventarla.
+        assertEquals(Technique.REDACTED,
+                Baseline.CONSERVATIVE.forPair(Sensitivity.RESTRICTED, null).technique());
+        assertEquals(Technique.REDACTED,
+                Baseline.CONSERVATIVE.forPair(Sensitivity.INTERNAL, null).technique());
+    }
+
+    @Test
+    void lo_publico_se_muestra_siempre_incluso_a_quien_no_se_identifico() {
+        // Es lo que "publico" quiere decir, y taparlo no protege a nadie.
+        assertEquals(Technique.FULL,
+                Baseline.CONSERVATIVE.forPair(Sensitivity.PUBLIC, null).technique());
+    }
+
+    @Test
+    void sin_omision_la_tabla_tiene_que_contestar_todo() {
+        // Como se comportaba antes de que la matriz existiera, y sigue
+        // disponible para quien lo quiera.
+        assertNull(Baseline.NONE.forPair(Sensitivity.PUBLIC, 9));
+    }
+
+    @Test
+    void el_clearance_es_una_cantidad_y_el_nombre_es_la_identidad() {
+        var medico = TrustLevel.of("medico", 3);
+        var enfermeria = TrustLevel.of("enfermeria", 3);
+        // DOS NOMBRES CON LA MISMA CANTIDAD es el caso normal: si ninguna
+        // regla los separa, no son dos niveles de confianza.
+        assertEquals(medico.clearance(), enfermeria.clearance());
+        assertNotEquals(medico.name(), enfermeria.name());
+        assertTrue(medico.atLeast(3));
+        assertFalse(medico.atLeast(4));
+    }
+
+    @Test
+    void un_nivel_sin_cantidad_no_entra_a_ninguna_banda() {
+        // Dos clases de confianza que no se comparan no tienen por que
+        // ponerse en la misma linea, y la libreria no obliga a inventarlo.
+        var socio = TrustLevel.of("socio");
+        assertNull(socio.clearance());
+        assertFalse(socio.atLeast(0));
+    }
+
     @Test
     void las_dos_son_la_misma_familia_y_se_pueden_atrapar_juntas() {
         var c = Classification.of("fiscalData", Sensitivity.CONFIDENTIAL);

@@ -124,6 +124,25 @@ public final class TableVerification {
         List<String> niveles = new ArrayList<>(new LinkedHashSet<>(declarados));
         if (extraLevels != null) {
             for (String nivel : extraLevels) {
+                // LA TABLA QUE EXPONE SU LISTA AFIRMA QUE ESTA COMPLETA
+                // --`trustLevels()` lo dice con todas las letras-- asi que
+                // un nivel que este proyecto declara y ella no tiene es una
+                // de dos: el nombre esta mal escrito de un lado, o a la
+                // tabla le falta. Las dos se arreglan mirando, y las dos
+                // cuestan caro sin avisar: lo que falta termina decidiendo
+                // en que forma se GUARDA el dato.
+                //
+                // Con la lista VACIA no se dice nada: eso es "no expongo mi
+                // lista", que es una respuesta legitima y documentada, y
+                // ahi `extraLevels` es justamente para lo que existe.
+                if (!declarados.isEmpty() && !declarados.contains(nivel)) {
+                    hallazgos.add(new Finding(Finding.NIVEL_QUE_LA_TABLA_NO_LISTA, null, nivel,
+                            "este sistema declara que lo atiende y la tabla no lo lista."
+                                    + " Los que la tabla lista son: " + String.join(", ", declarados)
+                                    + ". O el nombre está mal escrito de un lado, o a la tabla le"
+                                    + " falta: sin resolverlo, lo que decide en qué forma se guarda"
+                                    + " el dato queda a medias."));
+                }
                 if (!niveles.contains(nivel)) {
                     niveles.add(nivel);
                 }
@@ -375,5 +394,105 @@ public final class TableVerification {
                             + " la ausencia no es una decisión."));
         }
         return List.of();
+    }
+
+    // ------------------------------------------------------------------
+    // SAYING HOW EACH THING ENDED UP STORED
+    //
+    // This is NOT a check: it finds nothing and it fails at nothing. It
+    // ANSWERS a question that is resolved here and nowhere else.
+    //
+    // `storageFormFor` is already resolved at startup, once per
+    // classification, and until now the answer was thrown away -- only the
+    // findings came out. Whoever tests the system had no way of knowing
+    // whether a value is kept whole, tokenized or hashed, and that decides
+    // what they should expect to see in the database.
+    //
+    // AND THIS IS THE ONLY MOMENT IT CAN BE KNOWN. The generator cannot:
+    // the table is written by the organization and only exists at runtime.
+    // So it is not, and cannot be, in any generated artifact.
+    // ------------------------------------------------------------------
+
+    /**
+     * How one class of data ends up stored, and why, if a reason was given.
+     *
+     * @param classification  what the data is
+     * @param form            the form it is stored in
+     * @param encryptedAtRest whether this library encrypts it on the way to
+     *                        the column. Storage-level encryption —disk, a
+     *                        tablespace, a database that already encrypts—
+     *                        is outside this library and does not show here
+     * @param reasonForUse    why this system needs the real value, or
+     *                        {@code null} when nothing was declared
+     * @param warning         what deserves a second look, or {@code null}.
+     *                        It is not an error: nothing here can be proven
+     *                        wrong from the inside
+     */
+    public record StorageNote(Classification classification,
+                              TechniqueSpec form,
+                              boolean encryptedAtRest,
+                              String reasonForUse,
+                              String warning) {
+
+        @Override
+        public String toString() {
+            StringBuilder linea = new StringBuilder();
+            linea.append(classification).append(" -> ").append(form.technique());
+            if (encryptedAtRest) {
+                linea.append(" + encrypted at rest");
+            }
+            if (reasonForUse != null) {
+                linea.append(" (kept whole: ").append(reasonForUse).append(')');
+            }
+            if (warning != null) {
+                linea.append("\n    ! ").append(warning);
+            }
+            return linea.toString();
+        }
+    }
+
+    /**
+     * HOW EACH CLASSIFICATION ENDS UP STORED, for whoever has to know what
+     * to expect. One line per classification, in the order given.
+     *
+     * <p>A classification whose storage form cannot even be resolved is
+     * left out: that is a finding, and {@link #verify} is what reports
+     * it.</p>
+     */
+    public static List<StorageNote> describeStorage(DataProtection protection,
+                                                    Collection<Classification> classifications) {
+        List<StorageNote> notas = new ArrayList<>();
+        for (Classification classification : classifications) {
+            TechniqueSpec forma;
+            try {
+                forma = protection.storageFormFor(classification);
+            } catch (ProtectionException falla) {
+                continue;
+            }
+            boolean sobreElPiso = classification.sensitivity().atLeast(protection.encryptFrom());
+            boolean cifrado = forma.technique() == Technique.FULL
+                    && sobreElPiso
+                    && protection.keys() != null;
+            String razon = protection.reasonForUse(classification);
+
+            // THE ONE WORTH SEEING AT A GLANCE. Two decisions that are each
+            // reasonable on their own —"I need to use this value" and "the
+            // storage already encrypts"— leave the real value in clear in
+            // the database. Neither of them is wrong, and nobody is in a
+            // position to notice the combination except right here.
+            String aviso = null;
+            if (razon != null
+                    && forma.technique() == Technique.FULL
+                    && sobreElPiso
+                    && protection.keys() == null
+                    && protection.withoutEncryptionAtRest()) {
+                aviso = "the real value is kept in clear: it is needed whole, its sensitivity ("
+                        + classification.sensitivity() + ") is at the level that gets encrypted,"
+                        + " and this system declared it does not encrypt at rest."
+                        + " Check that the storage does encrypt it.";
+            }
+            notas.add(new StorageNote(classification, forma, cifrado, razon, aviso));
+        }
+        return List.copyOf(notas);
     }
 }

@@ -370,4 +370,122 @@ class VerificacionTest {
                         Map.of("cardholderData", BigDecimal.class), Set.of()));
         assertEquals(Set.of(Finding.TIPO_INCOMPATIBLE), clases(e.findings()));
     }
+
+    @Test
+    void avisa_de_un_nivel_que_este_sistema_atiende_y_la_tabla_no_lista() {
+        // LA TABLA QUE EXPONE SU LISTA AFIRMA QUE ESTA COMPLETA. Un nivel
+        // que este proyecto declara y ella no tiene es un nombre mal
+        // escrito de un lado, o una fila que falta del otro.
+        var t = tabla()
+                .trustLevel("interno")
+                .forClass("cardholderData", "interno", TechniqueSpec.of(Technique.FULL))
+                .forClass("cardholderData", PrecedenceTable.UNKNOWN_CALLER, TechniqueSpec.of(Technique.OMITTED))
+                .forClass("cardholderData", PrecedenceTable.ANY_LEVEL, TechniqueSpec.of(Technique.REDACTED))
+                .build();
+        var p = DataProtection.with(t).withoutEncryptionAtRest().build();
+
+        var hallazgos = TableVerification.verify(p, List.of(TARJETA), Map.of(), Set.of("extreno"));
+        assertTrue(clases(hallazgos).contains(Finding.NIVEL_QUE_LA_TABLA_NO_LISTA));
+        assertTrue(hallazgos.stream().anyMatch(h -> h.toString().contains("extreno")));
+        assertTrue(hallazgos.stream().anyMatch(h -> h.toString().contains("interno")));
+    }
+
+    @Test
+    void con_la_lista_vacia_no_se_avisa_de_ninguno() {
+        // Un conjunto vacio es "no expongo mi lista" --una respuesta
+        // legitima-- y ahi `extraLevels` es justamente para lo que existe.
+        var t = tabla()
+                .forClass("cardholderData", PrecedenceTable.ANY_LEVEL, TechniqueSpec.of(Technique.REDACTED))
+                .forClass("cardholderData", PrecedenceTable.UNKNOWN_CALLER, TechniqueSpec.of(Technique.OMITTED))
+                .build();
+        var p = DataProtection.with(t).withoutEncryptionAtRest().build();
+
+        var hallazgos = TableVerification.verify(p, List.of(TARJETA), Map.of(), Set.of("mesa"));
+        assertFalse(clases(hallazgos).contains(Finding.NIVEL_QUE_LA_TABLA_NO_LISTA));
+    }
+
+    // ------------------------------------------------------------------
+    // Lo que CUENTA (no lo que encuentra)
+    //
+    // El reporte no es un chequeo: no falla nunca. Lo que estos casos
+    // cuidan es que la respuesta SALGA -- se resolvía al arrancar y se
+    // tiraba, y sin ella quien prueba no sabe qué esperar en la base.
+    // ------------------------------------------------------------------
+
+    @Test
+    void el_reporte_dice_en_que_forma_queda_cada_clasificacion() {
+        var t = tabla()
+                .trustLevel("interno")
+                .forClass("cardholderData", "interno", new TechniqueSpec(Technique.MASKED, Map.of("keep", "4")))
+                .forClass("cardholderData", PrecedenceTable.UNKNOWN_CALLER, TechniqueSpec.of(Technique.OMITTED))
+                .build();
+        var p = DataProtection.with(t).withoutEncryptionAtRest().build();
+
+        var notas = TableVerification.describeStorage(p, List.of(TARJETA));
+        assertEquals(1, notas.size());
+        assertEquals(Technique.MASKED, notas.get(0).form().technique());
+        assertFalse(notas.get(0).encryptedAtRest());
+        assertNull(notas.get(0).reasonForUse());
+        assertNull(notas.get(0).warning());
+    }
+
+    @Test
+    void el_reporte_trae_la_razon_por_la_que_se_conserva_entero() {
+        var t = tabla()
+                .trustLevel("interno")
+                .forClass("cardholderData", "interno", new TechniqueSpec(Technique.MASKED, Map.of("keep", "4")))
+                .forClass("cardholderData", PrecedenceTable.UNKNOWN_CALLER, TechniqueSpec.of(Technique.OMITTED))
+                .build();
+        var p = DataProtection.with(t)
+                .keys(new Claves())
+                .usedInLogic(Map.of("cardholderData", "the risk score needs the real number"))
+                .build();
+
+        var nota = TableVerification.describeStorage(p, List.of(TARJETA)).get(0);
+        assertEquals(Technique.FULL, nota.form().technique());
+        // Se conserva, PERO CIFRADO: el cifrado en reposo se enciende solo.
+        assertTrue(nota.encryptedAtRest());
+        assertEquals("the risk score needs the real number", nota.reasonForUse());
+        assertNull(nota.warning());
+    }
+
+    @Test
+    void avisa_cuando_el_valor_real_queda_en_claro() {
+        // DOS DECISIONES QUE POR SEPARADO SON RAZONABLES --"lo necesito
+        // entero" y "el almacenamiento ya cifra"-- dejan el valor real en
+        // claro en la base. Nadie está en posición de notar la combinación
+        // salvo acá.
+        var t = tabla()
+                .trustLevel("interno")
+                .forClass("cardholderData", "interno", new TechniqueSpec(Technique.MASKED, Map.of("keep", "4")))
+                .forClass("cardholderData", PrecedenceTable.UNKNOWN_CALLER, TechniqueSpec.of(Technique.OMITTED))
+                .build();
+        var p = DataProtection.with(t)
+                .withoutEncryptionAtRest()
+                .usedInLogic(Map.of("cardholderData", "the risk score needs the real number"))
+                .build();
+
+        var nota = TableVerification.describeStorage(p, List.of(TARJETA)).get(0);
+        assertEquals(Technique.FULL, nota.form().technique());
+        assertFalse(nota.encryptedAtRest());
+        assertNotNull(nota.warning());
+        assertTrue(nota.toString().contains("kept whole"));
+        // Y NO ES UN HALLAZGO: la decisión sigue siendo de quien opera, y
+        // desde adentro no se puede probar que el almacenamiento no cifre.
+        assertDoesNotThrow(() -> TableVerification.requireComplete(p, List.of(TARJETA)));
+    }
+
+    /** Cifrado de mentira: lo que importa es que haya un KeyProvider. */
+    private static final class Claves implements KeyProvider {
+
+        @Override
+        public byte[] encrypt(byte[] plain, Classification classification) {
+            return plain;
+        }
+
+        @Override
+        public byte[] decrypt(byte[] encrypted, Classification classification) {
+            return encrypted;
+        }
+    }
 }

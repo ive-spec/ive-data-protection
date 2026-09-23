@@ -2,6 +2,8 @@ package ar.ive.spec.protection;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -50,6 +52,35 @@ public final class DataProtection {
     private final boolean sinCifradoEnReposo;
 
     /**
+     * WHICH CLASSES OF DATA THIS SYSTEM USES, and why -- by class name,
+     * the reason as the value. The generator brings it from the
+     * specification ({@code usedInLogic} on a View property); the library
+     * cannot know it, because the logic lives in hand-written code.
+     *
+     * <p>Empty means nothing was declared, which is the ordinary case:
+     * most classified data is only ever shown.</p>
+     */
+    private final Map<String, String> usedInLogic;
+
+    /**
+     * LOS NIVELES DE CONFIANZA DECLARADOS, por nombre.
+     *
+     * <p>Sale del catálogo de la organización y de lo que el proyecto dice
+     * que usa; el generador lo baja acá. <b>Vacío quiere decir "nadie
+     * declaró nada", y entonces esto se comporta exactamente como antes de
+     * que existiera</b>: ni se rechaza un nivel desconocido ni se consulta
+     * la matriz por omisión. Un sistema que no declara nada no cambia.</p>
+     */
+    private final Map<String, TrustLevel> trustLevels;
+
+    /**
+     * LO QUE CORRESPONDE CUANDO LA TABLA NO ESCRIBIÓ NADA PARA ESE PAR.
+     * Se consulta ÚLTIMA, debajo de todo lo escrito, y sólo si hay niveles
+     * declarados — sin cantidades no hay con qué entrar a la matriz.
+     */
+    private final Baseline baseline;
+
+    /**
      * La forma de guardado no cambia entre llamadas —sale de la tabla y
      * de la lista de niveles, no del valor— y se resuelve una vez por
      * clasificación: si no, cada valor de cada fila recorrería todos
@@ -64,6 +95,9 @@ public final class DataProtection {
         this.keys = builder.keys;
         this.encryptFrom = builder.encryptFrom;
         this.sinCifradoEnReposo = builder.sinCifradoEnReposo;
+        this.usedInLogic = Map.copyOf(builder.usedInLogic);
+        this.trustLevels = Map.copyOf(builder.trustLevels);
+        this.baseline = builder.baseline;
     }
 
     public static Builder with(DecisionTable table) {
@@ -87,6 +121,9 @@ public final class DataProtection {
         private Sensitivity encryptFrom = Sensitivity.CONFIDENTIAL;
         private boolean encryptFromDeclarado;
         private boolean sinCifradoEnReposo;
+        private Map<String, String> usedInLogic = Map.of();
+        private Map<String, TrustLevel> trustLevels = Map.of();
+        private Baseline baseline = Baseline.CONSERVATIVE;
 
         private Builder(DecisionTable table) {
             this.table = table;
@@ -137,6 +174,71 @@ public final class DataProtection {
         public Builder encryptAtRestFrom(Sensitivity floor) {
             this.encryptFrom = Objects.requireNonNull(floor, "floor");
             this.encryptFromDeclarado = true;
+            return this;
+        }
+
+        /**
+         * THE CLASSES OF DATA THIS SYSTEM USES, not only shows, with the
+         * reason for each one. The generator brings it from the
+         * specification; nobody is expected to write it by hand.
+         *
+         * <p>What it changes is the STORAGE FORM, and only that: a class
+         * declared here is never stored in a form with no way back, because
+         * from a hash or a mask the value cannot be operated on -- only
+         * displayed. <b>It changes nothing about who sees what.</b></p>
+         *
+         * <p>The reason is carried so the startup report can say it. A line
+         * stating that a value is kept whole is worth little without the
+         * sentence explaining why.</p>
+         */
+        public Builder usedInLogic(Map<String, String> reasonByClass) {
+            this.usedInLogic = reasonByClass == null ? Map.of() : Map.copyOf(reasonByClass);
+            return this;
+        }
+
+        /**
+         * LOS NIVELES DE CONFIANZA QUE ESTE SISTEMA CONOCE, con su
+         * clearance cuando lo tienen.
+         *
+         * <p>Declararlos cambia DOS cosas, y las dos para el mismo lado:
+         * un nivel que no esté acá se NIEGA en vez de caer en la regla de
+         * "para todos" —ver {@link UnknownTrustLevelException}— y los
+         * pares que la tabla no escribió pasan a resolverse con la matriz
+         * por omisión en vez de negarse.</p>
+         *
+         * <p><b>Sin declarar nada, nada de eso pasa</b> y la librería se
+         * comporta como siempre: exige que la tabla conteste todo.</p>
+         */
+        public Builder trustLevels(Collection<TrustLevel> levels) {
+            Map<String, TrustLevel> porNombre = new LinkedHashMap<>();
+            if (levels != null) {
+                for (TrustLevel nivel : levels) {
+                    TrustLevel previo = porNombre.put(nivel.name(), nivel);
+                    // DOS FUENTES QUE LE PONEN CANTIDAD DISTINTA AL MISMO
+                    // NOMBRE no están afinando nada: están en desacuerdo
+                    // sobre cuánto se confía en alguien, y eso resuelto a
+                    // escondidas es como un agujero se vuelve permanente.
+                    if (previo != null && !Objects.equals(previo.clearance(), nivel.clearance())) {
+                        throw new IllegalStateException(
+                                "El nivel de confianza \"" + nivel.name() + "\" se declaró dos veces con"
+                                        + " clearance distinto (" + previo.clearance() + " y "
+                                        + nivel.clearance() + "). No es un refinamiento: son dos"
+                                        + " afirmaciones opuestas sobre cuánto se le confía.");
+                    }
+                }
+            }
+            this.trustLevels = porNombre;
+            return this;
+        }
+
+        /**
+         * LA MATRIZ POR OMISIÓN DE ESTE SISTEMA, en vez de la de la
+         * librería. Es un piso, no un veredicto: se puede reemplazar
+         * entera, y {@link Baseline#NONE} la apaga —ahí la tabla vuelve a
+         * tener que contestar todo—.
+         */
+        public Builder baseline(Baseline baseline) {
+            this.baseline = baseline == null ? Baseline.NONE : baseline;
             return this;
         }
 
@@ -191,6 +293,33 @@ public final class DataProtection {
         return sinCifradoEnReposo;
     }
 
+    /**
+     * QUÉ CLASES DE DATO USA ESTE SISTEMA, y por qué.
+     *
+     * <p>PÚBLICO, a diferencia de los accesores de arriba, y por un motivo:
+     * hay cadenas que NO arman este objeto —lo reciben ya armado— y lo único
+     * que les queda es COMPROBAR que lo declarado llegó. Sin poder
+     * preguntarlo, una declaración que no se pasó no se nota, y ése es
+     * exactamente el error que esto existe para sacar.</p>
+     */
+    public Map<String, String> usedInLogic() {
+        return usedInLogic;
+    }
+
+    /**
+     * Why this system needs the real value of this data, or {@code null}
+     * when nothing was declared for any of its classes.
+     */
+    String reasonForUse(Classification classification) {
+        for (String clazz : classification.classes()) {
+            String reason = usedInLogic.get(clazz);
+            if (reason != null) {
+                return reason;
+            }
+        }
+        return null;
+    }
+
     // ------------------------------------------------------------------
     // La forma de guardado
     // ------------------------------------------------------------------
@@ -203,7 +332,7 @@ public final class DataProtection {
      * valor real no cierra ninguna puerta; guardar un hash las cierra
      * casi todas.</p>
      *
-     * <p>De ahí salen los tres casos, y no hay un cuarto:</p>
+     * <p>De ahí salen los tres casos:</p>
      * <ol>
      *   <li>Si todos los niveles reciben EXACTAMENTE LA MISMA forma
      *       —la misma técnica con los mismos parámetros—, se guarda esa:
@@ -219,6 +348,16 @@ public final class DataProtection {
      * <p>Un token cuenta como forma cerrada válida aunque tenga vuelta:
      * si todos reciben el mismo token, guardar el token alcanza, y el
      * valor real se recupera destokenizando cuando haga falta.</p>
+     *
+     * <p>Y HAY UN CASO ANTES QUE LOS TRES, que no sale de las salidas
+     * porque no puede: un dato que este sistema USA y no le muestra a
+     * nadie en claro no tiene destinatario, así que ningún nivel lo pide
+     * y ninguna salida lo cuenta. Lo declara la especificación
+     * ({@code usedInLogic}), y lo que exige es que la forma de guardado
+     * TENGA VUELTA — de un hash o de un enmascarado el valor no se puede
+     * operar, sólo mostrar. Si la forma que sale de las salidas ya es
+     * reversible ({@link Technique#FULL} o {@link Technique#TOKENIZED}),
+     * SE RESPETA: la elección de la tabla no se pisa por gusto.</p>
      */
     public TechniqueSpec storageFormFor(Classification classification) {
         Objects.requireNonNull(classification, "classification");
@@ -238,10 +377,17 @@ public final class DataProtection {
         // Sin niveles declarados, o con ninguna salida que mire el dato,
         // se guarda el valor real: es lo único que no cierra puertas que
         // todavía no se sabe si alguien va a necesitar.
-        if (forms.size() == 1) {
-            return forms.iterator().next();
+        TechniqueSpec form = forms.size() == 1
+                ? forms.iterator().next()
+                : TechniqueSpec.of(Technique.FULL);
+
+        // ESTE SISTEMA LO USA: la forma tiene que tener vuelta. Una que ya
+        // la tiene se respeta —un token guardado se destokeniza y el valor
+        // real vuelve— y sólo una sin vuelta se cambia por el valor real.
+        if (!form.technique().isReversible() && reasonForUse(classification) != null) {
+            return TechniqueSpec.of(Technique.FULL);
         }
-        return TechniqueSpec.of(Technique.FULL);
+        return form;
     }
 
     private Set<String> trustLevels() {
@@ -593,7 +739,29 @@ public final class DataProtection {
     }
 
     private TechniqueSpec resolved(Classification classification, String trustLevel) {
+        // UN NIVEL QUE NADIE DECLARÓ SE NIEGA, ANTES DE PREGUNTARLE A LA
+        // TABLA. No es "no sé" --eso es `null`, y tiene su propia fila--:
+        // es un nombre que alguien creyó que existía. Antes caía en la
+        // regla de "para todos mis niveles", y quien llega con un nombre
+        // inexistente no es uno de ellos: no fallaba, contestaba distinto
+        // y en silencio.
+        //
+        // SÓLO SI HAY NIVELES DECLARADOS. Sin declaración no hay contra
+        // qué comparar, y un sistema que no declara nada se comporta como
+        // siempre.
+        if (trustLevel != null && !trustLevels.isEmpty() && !trustLevels.containsKey(trustLevel)) {
+            throw new UnknownTrustLevelException(classification, trustLevel, trustLevels.keySet());
+        }
+
         TechniqueSpec spec = table.techniqueFor(classification, trustLevel);
+        if (spec == null) {
+            // LA MATRIZ POR OMISIÓN, que es lo último y lo más genérico:
+            // debajo de la fila de ese nivel, de la banda y del comodín.
+            // Existe para que un despliegue no tenga que escribir la tabla
+            // ENTERA antes de arrancar -- arranca protegiendo y escribe
+            // sólo las excepciones.
+            spec = porOmision(classification, trustLevel);
+        }
         if (spec == null) {
             // Una tabla que no contesta no autoriza nada: la falta de
             // respuesta no puede leerse como "mostralo entero".
@@ -602,6 +770,26 @@ public final class DataProtection {
                     classification, null, trustLevel);
         }
         return spec;
+    }
+
+    /**
+     * La matriz, entrada con la sensibilidad del dato y el clearance de
+     * quien pide.
+     *
+     * <p>SIN NIVELES DECLARADOS NO SE CONSULTA: la matriz necesita una
+     * cantidad para ubicar a quien llama, y sin declaración no hay
+     * ninguna. Ahí todo sigue dependiendo de que la tabla conteste.</p>
+     *
+     * <p>Un nivel declarado SIN clearance entra como el desconocido —lo
+     * más protector—: no hay cantidad con la cual ubicarlo, y suponerle
+     * una sería inventarla.</p>
+     */
+    private TechniqueSpec porOmision(Classification classification, String trustLevel) {
+        if (trustLevels.isEmpty()) {
+            return null;
+        }
+        TrustLevel nivel = trustLevel == null ? null : trustLevels.get(trustLevel);
+        return baseline.forPair(classification.sensitivity(), nivel == null ? null : nivel.clearance());
     }
 
     /**

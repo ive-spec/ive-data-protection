@@ -30,6 +30,16 @@ public record Finding(String kind, Classification classification, String trustLe
     /** La tabla no contestó, o falló al preguntarle. */
     public static final String TABLA_SIN_CONTESTAR = "tabla-sin-contestar";
 
+    /**
+     * Este sistema dice atender a alguien que la tabla no lista.
+     *
+     * <p>La tabla que expone su lista está afirmando que está COMPLETA
+     * —{@code trustLevels()} lo dice con todas las letras—, así que un
+     * nivel que este proyecto declara y ella no tiene es una de dos: o el
+     * nombre está mal escrito de un lado, o a la tabla le falta.</p>
+     */
+    public static final String NIVEL_QUE_LA_TABLA_NO_LISTA = "nivel-que-la-tabla-no-lista";
+
     @Override
     public String toString() {
         String donde = trustLevel == null ? "el invocador desconocido" : "'" + trustLevel + "'";

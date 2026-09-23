@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -132,6 +133,162 @@ class ConversionTest {
         // Es lo único que no cierra puertas que todavía no se sabe si
         // alguien va a necesitar.
         assertEquals(Technique.FULL, sin(new Tabla()).storageFormFor(TARJETA).technique());
+    }
+
+    // --- Los niveles declarados: el rechazo y la matriz por omision ---
+    //
+    // LAS DOS COSAS SOLO PASAN SI SE DECLARAN NIVELES. Un sistema que no
+    // declara nada tiene que comportarse EXACTAMENTE como antes de que
+    // esto existiera, y eso es lo primero que se prueba.
+
+    @Test
+    void sin_niveles_declarados_nada_cambia() {
+        // Ni se rechaza un nombre desconocido ni se consulta la matriz:
+        // la tabla sigue teniendo que contestar todo.
+        var p = sin(new Tabla().con("interno", VALOR_REAL));
+        assertEquals("4111", p.toRecipient("4111", String.class, TARJETA, "interno"));
+        assertThrows(UnsupportedTechniqueSpecException.class,
+                () -> p.toRecipient("4111", String.class, TARJETA, "cualquier-cosa"));
+    }
+
+    @Test
+    void un_nivel_que_nadie_declaro_se_niega_y_dice_cuales_hay() {
+        // ANTES CAIA EN LA REGLA DE "PARA TODOS MIS NIVELES", y quien
+        // llega con un nombre inexistente NO es uno de ellos: no fallaba,
+        // contestaba distinto y en silencio.
+        var p = DataProtection.with(new Tabla().con("interno", VALOR_REAL))
+                .trustLevels(List.of(TrustLevel.of("interno", 3)))
+                .build();
+        var e = assertThrows(UnknownTrustLevelException.class,
+                () -> p.toRecipient("4111", String.class, TARJETA, "extreno"));
+        assertTrue(e.getMessage().contains("extreno"));
+        assertTrue(e.getMessage().contains("interno"));
+        // Y DICE COMO SE DICE "no se": devolviendo null.
+        assertTrue(e.getMessage().contains("null"));
+    }
+
+    @Test
+    void no_saber_quien_llama_sigue_siendo_null_y_no_se_niega() {
+        // `null` es una respuesta legitima --el invocador desconocido-- y
+        // por eso NO entra al rechazo: entra a la matriz, que le da lo mas
+        // protector.
+        var p = DataProtection.with(new Tabla())
+                .trustLevels(List.of(TrustLevel.of("interno", 3)))
+                .build();
+        assertEquals("[REDACTED]", p.toRecipient("4111111111111111", String.class, TARJETA, null));
+    }
+
+    @Test
+    void la_matriz_contesta_el_par_que_la_tabla_no_escribio() {
+        // LA TABLA ESTA VACIA y el sistema igual arranca protegiendo. Es
+        // lo que esta matriz existe para comprar: antes habia que escribir
+        // la tabla ENTERA antes de que nada funcionara.
+        var p = DataProtection.with(new Tabla())
+                .trustLevels(List.of(TrustLevel.of("mesa", 3)))
+                .build();
+        // Restringido y clearance alto: enmascarado, NUNCA entero. Y el
+        // enmascarado por omision NO conserva ningun digito: cuantos dejar
+        // a la vista es una convencion de cada organizacion --PCI deja
+        // cuatro-- y la matriz no elige por nadie.
+        assertEquals("****************",
+                p.toRecipient("4111111111111111", String.class, TARJETA, "mesa"));
+    }
+
+    @Test
+    void lo_que_la_tabla_escribe_le_gana_a_la_matriz() {
+        // La matriz es lo ULTIMO: debajo de todo lo escrito.
+        var p = DataProtection.with(new Tabla().con("mesa", VALOR_REAL))
+                .trustLevels(List.of(TrustLevel.of("mesa", 3)))
+                .build();
+        assertEquals("4111111111111111",
+                p.toRecipient("4111111111111111", String.class, TARJETA, "mesa"));
+    }
+
+    @Test
+    void un_nivel_declarado_sin_clearance_entra_como_el_desconocido() {
+        // No hay cantidad con la cual ubicarlo, y suponerle una seria
+        // inventarla. Se lo trata como a quien no se identifico.
+        var p = DataProtection.with(new Tabla())
+                .trustLevels(List.of(TrustLevel.of("socio")))
+                .build();
+        assertEquals("[REDACTED]", p.toRecipient("4111111111111111", String.class, TARJETA, "socio"));
+    }
+
+    @Test
+    void la_matriz_del_sistema_reemplaza_a_la_de_la_libreria() {
+        // Es un piso, no un veredicto.
+        var p = DataProtection.with(new Tabla())
+                .trustLevels(List.of(TrustLevel.of("mesa", 3)))
+                .baseline((sensibilidad, clearance) -> TechniqueSpec.of(Technique.OMITTED))
+                .build();
+        assertNull(p.toRecipient("4111111111111111", String.class, TARJETA, "mesa"));
+    }
+
+    @Test
+    void apagar_la_omision_devuelve_el_comportamiento_de_antes() {
+        var p = DataProtection.with(new Tabla())
+                .trustLevels(List.of(TrustLevel.of("mesa", 3)))
+                .baseline(Baseline.NONE)
+                .build();
+        assertThrows(UnsupportedTechniqueSpecException.class,
+                () -> p.toRecipient("4111111111111111", String.class, TARJETA, "mesa"));
+    }
+
+    @Test
+    void el_mismo_nombre_con_dos_cantidades_no_se_resuelve_en_silencio() {
+        // No es un refinamiento: son dos afirmaciones opuestas sobre
+        // cuanto se le confia a alguien.
+        assertThrows(IllegalStateException.class, () -> DataProtection.with(new Tabla())
+                .trustLevels(List.of(TrustLevel.of("mesa", 3), TrustLevel.of("mesa", 1)))
+                .build());
+    }
+
+    // --- Lo que este sistema USA, no sólo muestra ---
+    //
+    // LO QUE ESTOS CASOS CUIDAN, y no se ve en ningún otro: la exposición
+    // no puede expresar un dato que se usa adentro y no se le muestra a
+    // nadie en claro. No hay destinatario, así que ningún nivel lo pide y
+    // ninguna salida lo cuenta. Sin la declaración, la forma de guardado
+    // sale cerrada Y NO FALLA AL LEER: `fromStorage` devuelve el
+    // enmascarado y la lógica calcula con eso. Es un número mal calculado,
+    // no un error que se vea.
+
+    @Test
+    void lo_que_este_sistema_usa_no_se_guarda_sin_vuelta() {
+        var enmascarado = new TechniqueSpec(Technique.MASKED, Map.of(TechniqueSpec.KEEP, "4"));
+        var tabla = new Tabla().con("internal", enmascarado).con("partner", enmascarado);
+        // Sin declararlo: todos reciben lo mismo, así que se guarda esa
+        // forma -- y de un enmascarado no se vuelve.
+        assertEquals(Technique.MASKED, sin(tabla).storageFormFor(TARJETA).technique());
+
+        var usado = DataProtection.with(tabla)
+                .usedInLogic(Map.of("cardholderData", "the risk score needs the real number"))
+                .build();
+        assertEquals(Technique.FULL, usado.storageFormFor(TARJETA).technique());
+    }
+
+    @Test
+    void un_token_ya_tiene_vuelta_asi_que_la_eleccion_de_la_tabla_se_respeta() {
+        // LA REGLA ES "REVERSIBLE", NO "ENTERO". Pisar el token con el
+        // valor real guardaría en claro algo que la tabla había decidido
+        // sacar de esta base, sin que nadie lo pidiera.
+        var token = TechniqueSpec.of(Technique.TOKENIZED);
+        var p = DataProtection.with(new Tabla().con("internal", token).con("partner", token))
+                .tokens(new Tokens())
+                .usedInLogic(Map.of("cardholderData", "the risk score needs the real number"))
+                .build();
+        assertEquals(token, p.storageFormFor(TARJETA));
+        assertEquals("4111111111111111",
+                p.fromStorage("tok_4111111111111111", String.class, TARJETA));
+    }
+
+    @Test
+    void declarar_otra_clase_no_cambia_nada() {
+        var enmascarado = new TechniqueSpec(Technique.MASKED, Map.of(TechniqueSpec.KEEP, "4"));
+        var p = DataProtection.with(new Tabla().con("internal", enmascarado).con("partner", enmascarado))
+                .usedInLogic(Map.of("credential", "otra clase, no ésta"))
+                .build();
+        assertEquals(Technique.MASKED, p.storageFormFor(TARJETA).technique());
     }
 
     @Test
