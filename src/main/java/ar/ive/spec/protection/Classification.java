@@ -24,7 +24,8 @@ import java.util.Objects;
  *                   clases que hoy lo declaran. Puede venir vacío, y
  *                   entonces ese eje simplemente no se usa.
  */
-public record Classification(List<String> classes, Sensitivity sensitivity, List<String> compliance) {
+public record Classification(List<String> classes, Sensitivity sensitivity, List<String> compliance,
+                             Integrity integrity) {
 
     public Classification {
         Objects.requireNonNull(classes, "classes");
@@ -37,6 +38,15 @@ public record Classification(List<String> classes, Sensitivity sensitivity, List
     }
 
     /** Sin cumplimiento declarado: la tabla decide por clase y por sensibilidad. */
+    /**
+     * Without integrity: NOT EVALUATED. Null is not {@link Integrity#LOW} --
+     * nobody said it is harmless -- and the library does not decide on it:
+     * what comes in is accepted, as before.
+     */
+    public Classification(List<String> classes, Sensitivity sensitivity, List<String> compliance) {
+        this(classes, sensitivity, compliance, null);
+    }
+
     public Classification(List<String> classes, Sensitivity sensitivity) {
         this(classes, sensitivity, List.of());
     }

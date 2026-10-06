@@ -121,4 +121,14 @@ public interface DecisionTable {
     default TechniqueSpec forLogging(Classification classification) {
         return TechniqueSpec.of(Technique.REDACTED);
     }
+
+    /**
+     * WHETHER A DATUM THAT COMES IN IS TAKEN from whoever sends it: the
+     * other direction. {@code null} is the table not answering, and then
+     * the input matrix decides ({@link InputBaseline#CONSERVATIVE}); a
+     * missing answer never authorizes a write.
+     */
+    default Boolean acceptsFrom(Classification classification, String trustLevel) {
+        return null;
+    }
 }

@@ -24,7 +24,7 @@
        generados: es la otra librería de runtime de este ecosistema. -->
   <groupId>ar.ive.spec</groupId>
   <artifactId>ive-data-protection</artifactId>
-  <version>1.0.5</version>
+  <version>1.1.0</version>
   <packaging>jar</packaging>
 
   <name>IVE Data Protection</name>

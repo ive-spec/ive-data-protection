@@ -73,7 +73,21 @@ public final class PrecedenceTable implements DecisionTable {
      */
     public static final String UNKNOWN_CALLER = null;
 
-    private enum Axis { CLASS, COMPLIANCE, SENSITIVITY }
+    private enum Axis { CLASS, COMPLIANCE, SENSITIVITY, INTEGRITY }
+
+    /** What goes out: class, then norm, then sensitivity. */
+    private static final Axis[] OUTPUT_AXES = { Axis.CLASS, Axis.COMPLIANCE, Axis.SENSITIVITY };
+
+    /** What comes in: class, then norm, then integrity. */
+    private static final Axis[] INPUT_AXES = { Axis.CLASS, Axis.COMPLIANCE, Axis.INTEGRITY };
+
+    /** A rule about what is accepted when it comes in. */
+    private record AcceptRule(Axis axis, String key, String trustLevel, boolean accepts) {
+
+        boolean matches(Classification classification, String level) {
+            return Objects.equals(trustLevel, level) && new Rule(axis, key, level, null).appliesTo(classification);
+        }
+    }
 
     private record Rule(Axis axis, String key, String trustLevel, TechniqueSpec spec) {
 
@@ -86,6 +100,7 @@ public final class PrecedenceTable implements DecisionTable {
                 case CLASS -> classification.has(key);
                 case COMPLIANCE -> classification.under(key);
                 case SENSITIVITY -> classification.sensitivity().name().equals(key);
+                case INTEGRITY -> classification.integrity() != null && classification.integrity().name().equals(key);
             };
         }
     }
@@ -94,9 +109,11 @@ public final class PrecedenceTable implements DecisionTable {
     private final List<Rule> ceilings;
     private final Set<String> trustLevels;
     private final TechniqueSpec logging;
+    private final List<AcceptRule> acceptRules;
 
     private PrecedenceTable(Builder builder) {
         this.rules = List.copyOf(builder.rules);
+        this.acceptRules = List.copyOf(builder.acceptRules);
         this.ceilings = List.copyOf(builder.ceilings);
         this.logging = builder.logging;
 
@@ -112,6 +129,11 @@ public final class PrecedenceTable implements DecisionTable {
                 levels.add(rule.trustLevel());
             }
         }
+        for (AcceptRule rule : builder.acceptRules) {
+            if (rule.trustLevel() != null && !ANY_LEVEL.equals(rule.trustLevel())) {
+                levels.add(rule.trustLevel());
+            }
+        }
         this.trustLevels = Set.copyOf(levels);
     }
 
@@ -122,7 +144,7 @@ public final class PrecedenceTable implements DecisionTable {
     @Override
     public TechniqueSpec techniqueFor(Classification classification, String trustLevel) {
         Objects.requireNonNull(classification, "classification");
-        for (Axis axis : Axis.values()) {
+        for (Axis axis : OUTPUT_AXES) {
             TechniqueSpec found = mostProtective(rules, axis, classification, trustLevel);
             if (found != null) {
                 return found;
@@ -136,7 +158,7 @@ public final class PrecedenceTable implements DecisionTable {
     @Override
     public Technique ceilingFor(Classification classification, String trustLevel) {
         Objects.requireNonNull(classification, "classification");
-        for (Axis axis : Axis.values()) {
+        for (Axis axis : OUTPUT_AXES) {
             TechniqueSpec found = mostProtective(ceilings, axis, classification, trustLevel);
             if (found != null) {
                 return found.technique();
@@ -153,6 +175,45 @@ public final class PrecedenceTable implements DecisionTable {
     @Override
     public TechniqueSpec forLogging(Classification classification) {
         return logging;
+    }
+
+    /**
+     * WHETHER WHAT COMES IN IS TAKEN, by the same precedence as the output:
+     * class, then norm, then integrity; a rule for this level before one
+     * for any level. Within an axis the most protective wins -- false --: a
+     * datum that is two things at once is not accepted if either says no.
+     * Null: no rule, and the evaluator's input matrix decides.
+     */
+    @Override
+    public Boolean acceptsFrom(Classification classification, String trustLevel) {
+        Objects.requireNonNull(classification, "classification");
+        for (Axis axis : INPUT_AXES) {
+            Boolean own = acceptsIn(axis, classification, trustLevel);
+            if (own != null) {
+                return own;
+            }
+            if (trustLevel != null) {
+                Boolean any = acceptsIn(axis, classification, ANY_LEVEL);
+                if (any != null) {
+                    return any;
+                }
+            }
+        }
+        return null;
+    }
+
+    private Boolean acceptsIn(Axis axis, Classification classification, String trustLevel) {
+        Boolean result = null;
+        for (AcceptRule rule : acceptRules) {
+            if (rule.axis() != axis || !rule.matches(classification, trustLevel)) {
+                continue;
+            }
+            if (!rule.accepts()) {
+                return false;
+            }
+            result = true;
+        }
+        return result;
     }
 
     /**
@@ -193,8 +254,27 @@ public final class PrecedenceTable implements DecisionTable {
         private final List<Rule> ceilings = new ArrayList<>();
         private final Set<String> trustLevels = new LinkedHashSet<>();
         private TechniqueSpec logging = TechniqueSpec.of(Technique.REDACTED);
+        private final List<AcceptRule> acceptRules = new ArrayList<>();
 
         private Builder() {
+        }
+
+        /** Whether a datum of this class is taken from this level when it comes in. */
+        public Builder acceptForClass(String clazz, String trustLevel, boolean accepts) {
+            return accept(Axis.CLASS, clazz, trustLevel, accepts);
+        }
+
+        public Builder acceptForCompliance(String norm, String trustLevel, boolean accepts) {
+            return accept(Axis.COMPLIANCE, norm, trustLevel, accepts);
+        }
+
+        public Builder acceptForIntegrity(Integrity integrity, String trustLevel, boolean accepts) {
+            return accept(Axis.INTEGRITY, integrity.name(), trustLevel, accepts);
+        }
+
+        private Builder accept(Axis axis, String key, String trustLevel, boolean accepts) {
+            acceptRules.add(new AcceptRule(axis, Objects.requireNonNull(key, "key"), trustLevel, accepts));
+            return this;
         }
 
         public Builder forClass(String clazz, String trustLevel, TechniqueSpec spec) {

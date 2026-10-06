@@ -79,6 +79,7 @@ public final class DataProtection {
      * declarados — sin cantidades no hay con qué entrar a la matriz.
      */
     private final Baseline baseline;
+    private final InputBaseline inputBaseline;
 
     /**
      * La forma de guardado no cambia entre llamadas —sale de la tabla y
@@ -98,6 +99,7 @@ public final class DataProtection {
         this.usedInLogic = Map.copyOf(builder.usedInLogic);
         this.trustLevels = Map.copyOf(builder.trustLevels);
         this.baseline = builder.baseline;
+        this.inputBaseline = builder.inputBaseline;
     }
 
     public static Builder with(DecisionTable table) {
@@ -124,6 +126,7 @@ public final class DataProtection {
         private Map<String, String> usedInLogic = Map.of();
         private Map<String, TrustLevel> trustLevels = Map.of();
         private Baseline baseline = Baseline.CONSERVATIVE;
+        private InputBaseline inputBaseline = InputBaseline.CONSERVATIVE;
 
         private Builder(DecisionTable table) {
             this.table = table;
@@ -239,6 +242,16 @@ public final class DataProtection {
          */
         public Builder baseline(Baseline baseline) {
             this.baseline = baseline == null ? Baseline.NONE : baseline;
+            return this;
+        }
+
+        /**
+         * THE DEFAULT FOR WHAT COMES IN, instead of the library's. Replaced
+         * whole; {@link InputBaseline#NONE} turns it off, and then only what
+         * the table accepts is taken.
+         */
+        public Builder inputBaseline(InputBaseline inputBaseline) {
+            this.inputBaseline = inputBaseline == null ? InputBaseline.NONE : inputBaseline;
             return this;
         }
 
@@ -784,6 +797,35 @@ public final class DataProtection {
      * más protector—: no hay cantidad con la cual ubicarlo, y suponerle
      * una sería inventarla.</p>
      */
+    /**
+     * WHETHER A DATUM THAT COMES IN IS TAKEN from whoever sends it. The
+     * other direction of {@code toRecipient}: there the question is what
+     * the caller may SEE, here what the caller may SET.
+     *
+     * <p>The table answers first; where it wrote nothing, the input
+     * matrix, with the integrity of the datum and the clearance of the
+     * level. A missing answer never authorizes: null from both is false.</p>
+     *
+     * <p>A CLASSIFICATION WITHOUT INTEGRITY WAS NOT EVALUATED, and what
+     * comes in is taken, as it always was. A level nobody declared is
+     * refused, as on the way out.</p>
+     */
+    public boolean acceptsFrom(Classification classification, String trustLevel) {
+        Objects.requireNonNull(classification, "classification");
+        if (classification.integrity() == null) {
+            return true;
+        }
+        if (trustLevel != null && !trustLevels.isEmpty() && !trustLevels.containsKey(trustLevel)) {
+            throw new UnknownTrustLevelException(classification, trustLevel, trustLevels.keySet());
+        }
+        Boolean written = table.acceptsFrom(classification, trustLevel);
+        if (written != null) {
+            return written;
+        }
+        TrustLevel nivel = trustLevel == null ? null : trustLevels.get(trustLevel);
+        return Boolean.TRUE.equals(inputBaseline.forPair(classification.integrity(), nivel == null ? null : nivel.clearance()));
+    }
+
     private TechniqueSpec porOmision(Classification classification, String trustLevel) {
         if (trustLevels.isEmpty()) {
             return null;
